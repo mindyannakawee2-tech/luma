@@ -7,7 +7,7 @@ set -euo pipefail
 # Override anytime with:
 #   curl -fsSL https://YOUR.github.io/luma-site/install.sh | LUMA_BASE_URL=https://YOUR.github.io/luma-site bash
 
-BASE_URL="${LUMA_BASE_URL:-https://mindyannakawee2-tech.github.io/luma-site}"
+BASE_URL="${LUMA_BASE_URL:-https://mindyannakawee2-tech.github.io/luma}"
 PREFIX="${PREFIX:-/usr/local}"
 BINDIR="$PREFIX/bin"
 TMPDIR="$(mktemp -d)"
