@@ -158,7 +158,7 @@ fi
 
 if [ "$PLATFORM" = "linux" ]; then
   run_root cp "$TMP_LUMA" "$LUMA_MANAGER/luma.py"
-  run_root chmod +x "$LUMA_MANAGER/luma.py"
+  run_root chmod 755 "$LUMA_MANAGER/luma.py"
 else
   cp "$TMP_LUMA" "$LUMA_MANAGER/luma.py"
   chmod +x "$LUMA_MANAGER/luma.py"
@@ -195,7 +195,7 @@ exec python3 "$LUMA_MANAGER" "$@"
 
 if [ "$PLATFORM" = "linux" ]; then
   write_root_file "$LUMA_BIN" "$LAUNCHER_CONTENT"
-  run_root chmod +x "$LUMA_BIN"
+  run_root chmod 755 "$LUMA_BIN"
 else
   if [ -w "/usr/local/bin" ]; then
     printf "%s\n" "$LAUNCHER_CONTENT" > "$LUMA_BIN"
@@ -203,7 +203,7 @@ else
   else
     echo "Need permission to write /usr/local/bin/luma"
     write_root_file "$LUMA_BIN" "$LAUNCHER_CONTENT"
-    run_root chmod +x "$LUMA_BIN"
+    run_root chmod 755 "$LUMA_BIN"
   fi
 fi
 
