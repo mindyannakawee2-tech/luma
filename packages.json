@@ -1,0 +1,19 @@
+{
+  "repo_name": "luma-official",
+  "repo_version": "1",
+  "packages": [
+    {
+      "app_id": "org.auralis.hello",
+      "app_name": "LUMA Hello",
+      "version": "1.0.0",
+      "author": "Auralis",
+      "type": "python",
+      "category": "Utility",
+      "description": "Example LUMA package.",
+      "file": "packages/org.auralis.hello_1.0.0.luma",
+      "sha256": "34f4b5bc149150573022618a286d6cdb106d1bbab4b9c9049754d19395944f5e",
+      "size": 1453,
+      "icon": "icons/org.auralis.hello.png"
+    }
+  ]
+}
