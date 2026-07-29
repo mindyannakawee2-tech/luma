@@ -79,14 +79,6 @@ Then install:
 luma install lumacenter.github.io/hello main
 ```
 
-## Repo website install
-
-```bash
-luma pkg-get mindyannakawee2-tech.github.io/luma-site
-luma search notes
-luma install aurora-notes
-```
-
 ## Commands
 
 ```text
