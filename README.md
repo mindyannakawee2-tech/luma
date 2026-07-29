@@ -1,12 +1,5 @@
 # LUMA V1.2.0
 
-## New in 1.2.0
-
-- Added `uninstall.sh`
-- Added `luma self-uninstall`
-- Auto-adds `https://` before installing from URL-like sources
-- This now works:
-
 ```bash
 luma install lumacenter.github.io/hello main
 ```
@@ -31,17 +24,14 @@ https://raw.githubusercontent.com/lumacenter/hello/main/main/package.luma
 ## Install
 
 ```bash
-cd ~/Downloads
-unzip luma-v1.2.0.zip
-cd luma-v1.2.0
-chmod +x install.sh uninstall.sh
-./install.sh
+curl -fsSL https://mindyannakawee2-tech.github.io/luma/install.sh | bash
 ```
 
 ## Uninstall LUMA manager
 
 ```bash
-./uninstall.sh
+curl -fsSL https://mindyannakawee2-tech.github.io/luma/uninstall.sh | bash
+
 ```
 
 Or:
