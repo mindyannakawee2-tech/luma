@@ -1,17 +1,26 @@
 #!/usr/bin/env bash
 set -e
-cd "$(dirname "$0")"
 
-sudo mkdir -p /opt/luma/manager
-sudo cp luma.py /opt/luma/manager/luma.py
-sudo chmod +x /opt/luma/manager/luma.py
+echo "Uninstalling LUMA manager..."
 
-sudo tee /usr/local/bin/luma >/dev/null <<'EOF'
-#!/usr/bin/env bash
-exec python3 /opt/luma/manager/luma.py "$@"
-EOF
+sudo rm -f /usr/local/bin/luma
+sudo rm -f /opt/luma/manager/luma.py
 
-sudo chmod +x /usr/local/bin/luma
+if [ -d /opt/luma/manager ] && [ -z "$(ls -A /opt/luma/manager 2>/dev/null)" ]; then
+  sudo rmdir /opt/luma/manager
+fi
 
-echo "Installed LUMA V1.3.0"
-luma version
+if [ -d /opt/luma ] && [ -z "$(ls -A /opt/luma 2>/dev/null)" ]; then
+  sudo rmdir /opt/luma
+fi
+
+echo
+echo "LUMA manager removed."
+echo "Installed packages and repo data were kept at:"
+echo "  $HOME/.local/share/luma"
+echo
+echo "To remove installed LUMA apps too, run:"
+echo "  rm -rf \"$HOME/.local/share/luma\""
+echo
+echo "To remove app shortcuts too, check:"
+echo "  ls $HOME/.local/bin"
