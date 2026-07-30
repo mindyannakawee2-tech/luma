@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-LUMA Package Manager V1.2.0
+LUMA Package Manager V1.3.0
 
 Changes in 1.2.0:
   - Better URL auto-fix: lumacenter.github.io/pkg becomes https://lumacenter.github.io/pkg
@@ -35,7 +35,7 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 
 LUMA_HOME = Path(os.environ.get("LUMA_HOME", Path.home() / ".local" / "share" / "luma"))
 APPS_DIR = LUMA_HOME / "apps"
@@ -225,6 +225,166 @@ def read_manifest(path: Path) -> dict[str, str]:
     return read_manifest_from_luma(path)
 
 
+def parse_dependencies_text(text: str) -> list[dict[str, str]]:
+    deps: list[dict[str, str]] = []
+    for line_no, raw in enumerate(text.splitlines(), 1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if " #" in line:
+            line = line.split(" #", 1)[0].strip()
+        if ":" in line:
+            dep_type, value = line.split(":", 1)
+            dep_type = dep_type.strip().lower()
+            value = value.strip()
+        else:
+            dep_type = "command"
+            value = line.strip()
+        if value:
+            deps.append({"type": dep_type, "value": value, "line": str(line_no)})
+    return deps
+
+
+def read_dependencies_from_folder(folder: Path) -> list[dict[str, str]]:
+    for path in [
+        folder / "MANIFEST" / "dependencies.txt",
+        folder / "MANIFEST" / "depedencies.txt",
+        folder / "dependencies.txt",
+        folder / "depedencies.txt",
+    ]:
+        if path.exists():
+            return parse_dependencies_text(path.read_text(encoding="utf-8", errors="replace"))
+    return []
+
+
+def read_dependencies_from_luma(package_file: Path) -> list[dict[str, str]]:
+    if not zipfile.is_zipfile(package_file):
+        die(f"Not a valid .luma zip file: {package_file}")
+    with zipfile.ZipFile(package_file, "r") as z:
+        names = z.namelist()
+        for candidate in [
+            "MANIFEST/dependencies.txt",
+            "MANIFEST/depedencies.txt",
+            "dependencies.txt",
+            "depedencies.txt",
+        ]:
+            if candidate in names:
+                return parse_dependencies_text(z.read(candidate).decode("utf-8", errors="replace"))
+    return []
+
+
+def read_dependencies(path: Path) -> list[dict[str, str]]:
+    return read_dependencies_from_folder(path) if path.is_dir() else read_dependencies_from_luma(path)
+
+
+def command_exists(command: str) -> bool:
+    return shutil.which(command) is not None
+
+
+def luma_package_installed(package_id: str) -> bool:
+    return (APPS_DIR / slugify(package_id) / ".luma-installed.json").exists()
+
+
+def apt_package_installed(package: str) -> bool:
+    if not command_exists("dpkg-query"):
+        return False
+    result = subprocess.run(
+        ["dpkg-query", "-W", "-f=${Status}", package],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    )
+    return result.returncode == 0 and "install ok installed" in result.stdout
+
+
+def pip_package_installed(package: str) -> bool:
+    result = subprocess.run(
+        [sys.executable, "-m", "pip", "show", package],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return result.returncode == 0
+
+
+def flatpak_installed(app_id: str) -> bool:
+    if not command_exists("flatpak"):
+        return False
+    result = subprocess.run(["flatpak", "info", app_id], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return result.returncode == 0
+
+
+def dependency_status(dep: dict[str, str]) -> tuple[bool, str]:
+    dep_type = dep["type"]
+    value = dep["value"]
+    if dep_type == "command":
+        return command_exists(value), f"command {value}"
+    if dep_type == "apt":
+        return apt_package_installed(value), f"apt package {value}"
+    if dep_type == "pip":
+        return pip_package_installed(value), f"pip package {value}"
+    if dep_type == "flatpak":
+        return flatpak_installed(value), f"flatpak app {value}"
+    if dep_type == "luma":
+        return luma_package_installed(value), f"LUMA package {value}"
+    return False, f"unknown dependency type {dep_type}:{value}"
+
+
+def install_dependency(dep: dict[str, str], yes: bool = False) -> None:
+    dep_type = dep["type"]
+    value = dep["value"]
+    ok, label = dependency_status(dep)
+    if ok:
+        say(f"Dependency already installed: {label}")
+        return
+    say(f"Installing dependency: {label}")
+    if not yes:
+        answer = input(f"Install {label}? [y/N] ").strip().lower()
+        if answer not in ("y", "yes"):
+            die(f"Dependency installation cancelled: {label}")
+    if dep_type == "command":
+        die(f"Missing command: {value}. Use apt:{value}, pip:{value}, flatpak:{value}, or install it manually.")
+    if dep_type == "apt":
+        if not command_exists("apt"):
+            die("apt not found on this system")
+        subprocess.run(["sudo", "apt", "update"], check=True)
+        subprocess.run(["sudo", "apt", "install", "-y", value], check=True)
+        return
+    if dep_type == "pip":
+        subprocess.run([sys.executable, "-m", "pip", "install", "--user", value], check=True)
+        return
+    if dep_type == "flatpak":
+        if not command_exists("flatpak"):
+            die("flatpak not found. Install flatpak first.")
+        subprocess.run(["flatpak", "install", "-y", "flathub", value], check=True)
+        return
+    if dep_type == "luma":
+        fake_args = argparse.Namespace(package=value, release=None, install_deps=yes, yes=yes)
+        cmd_install(fake_args)
+        return
+    die(f"Unknown dependency type: {dep_type}")
+
+
+def check_dependencies_for_path(path: Path, install_missing: bool = False, yes: bool = False) -> None:
+    deps = read_dependencies(path)
+    if not deps:
+        say("No dependencies found.")
+        return
+    say("Checking dependencies:")
+    missing = []
+    for dep in deps:
+        ok, label = dependency_status(dep)
+        if ok:
+            print(f"  [OK]      {label}")
+        else:
+            print(f"  [MISSING] {label}")
+            missing.append(dep)
+    if missing and not install_missing:
+        die(f"Missing dependencies. Install them with: luma install-deps {path}")
+    if install_missing:
+        for dep in missing:
+            install_dependency(dep, yes=yes)
+
+
 def validate_manifest(manifest: dict[str, str]) -> list[str]:
     errors = []
     if not manifest.get("id") and not manifest.get("name"):
@@ -340,6 +500,19 @@ def create_template(folder: Path, package_id: str | None = None, language: str =
     }
     (folder / "MANIFEST" / "config.txt").write_text(config_to_text(config), encoding="utf-8")
 
+    (folder / "MANIFEST" / "dependencies.txt").write_text(
+        "# LUMA dependencies file\n"
+        "# Supported formats:\n"
+        "#   command:python3\n"
+        "#   apt:python3\n"
+        "#   pip:requests\n"
+        "#   flatpak:org.videolan.VLC\n"
+        "#   luma:other-package\n"
+        "\n"
+        "command:python3\n",
+        encoding="utf-8",
+    )
+
     language = language.lower().strip()
     if language in ("python", "py"):
         (folder / "ASSETS" / "main.py").write_text('print("Hello from LUMA package!")\n', encoding="utf-8")
@@ -401,6 +574,11 @@ set -e
 cd "$(dirname "$0")/.."
 cat ASSETS/main.txt
 """
+    if language == "java":
+        (folder / "MANIFEST" / "dependencies.txt").write_text("apt:default-jdk\n", encoding="utf-8")
+    elif language == "c" or language in ("cpp", "c++"):
+        (folder / "MANIFEST" / "dependencies.txt").write_text("apt:build-essential\n", encoding="utf-8")
+
     (folder / "SCRIPTS" / "run.sh").write_text(run, encoding="utf-8")
     (folder / "SCRIPTS" / "error_handler.sh").write_text("#!/usr/bin/env bash\necho \"LUMA package error: $1\" >&2\n", encoding="utf-8")
     (folder / "SCRIPTS" / "crash_handler.sh").write_text("#!/usr/bin/env bash\necho \"LUMA package crashed: $1\" >&2\n", encoding="utf-8")
@@ -434,11 +612,13 @@ def pack_folder(folder: Path, output: Path) -> None:
     say(f"SHA256: {sha256_file(output)}")
 
 
-def install_luma_file(package_file: Path, source_url: str | None = None) -> None:
+def install_luma_file(package_file: Path, source_url: str | None = None, install_deps: bool = False, yes: bool = False) -> None:
     manifest = read_manifest_from_luma(package_file)
     errors = validate_manifest(manifest)
     if errors:
         die("\n".join(errors))
+    if read_dependencies_from_luma(package_file):
+        check_dependencies_for_path(package_file, install_missing=install_deps, yes=yes)
     pkg_id = package_id_from_manifest(manifest)
     name = manifest.get("name") or pkg_id
     version = manifest.get("version", "0.0.0")
@@ -452,7 +632,7 @@ def install_luma_file(package_file: Path, source_url: str | None = None) -> None
     if not entry_path.exists():
         die(f"Entry script does not exist after install: {entry}")
     make_executable(entry_path)
-    meta = {"id": pkg_id, "name": name, "version": version, "entry": entry, "source_url": source_url, "sha256": sha256_file(package_file)}
+    meta = {"id": pkg_id, "name": name, "version": version, "entry": entry, "source_url": source_url, "sha256": sha256_file(package_file), "dependencies": read_dependencies_from_luma(package_file)}
     (install_dir / ".luma-installed.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
     launcher = BIN_DIR / pkg_id
     launcher.write_text(f"""#!/usr/bin/env bash
@@ -524,6 +704,15 @@ def cmd_check(args):
     print("Manifest:")
     for k, v in manifest.items():
         print(f"  {k}: {v}")
+    deps = read_dependencies(target)
+    print("\nDependencies:")
+    if deps:
+        for dep in deps:
+            ok, label = dependency_status(dep)
+            mark = "OK" if ok else "MISSING"
+            print(f"  [{mark}] {dep['type']}:{dep['value']}  ({label})")
+    else:
+        print("  none")
     if errors:
         print("\nProblems:")
         for e in errors:
@@ -534,6 +723,14 @@ def cmd_check(args):
     print("\nOK: package looks valid")
 
 
+def cmd_deps(args):
+    check_dependencies_for_path(Path(args.target), install_missing=False, yes=args.yes)
+
+
+def cmd_install_deps(args):
+    check_dependencies_for_path(Path(args.target), install_missing=True, yes=args.yes)
+
+
 def cmd_install(args):
     ensure_dirs()
     source = args.package.strip()
@@ -541,7 +738,7 @@ def cmd_install(args):
     cache_file = CACHE_DIR / "downloaded.package.luma"
 
     if Path(source).exists() and Path(source).is_file():
-        install_luma_file(Path(source), source_url=str(Path(source).resolve()))
+        install_luma_file(Path(source), source_url=str(Path(source).resolve()), install_deps=args.install_deps, yes=args.yes)
         return
 
     if is_direct_source(source):
@@ -552,7 +749,7 @@ def cmd_install(args):
             download_file(package_url, cache_file)
         except RuntimeError as e:
             die(str(e))
-        install_luma_file(cache_file, source_url=package_url)
+        install_luma_file(cache_file, source_url=package_url, install_deps=args.install_deps, yes=args.yes)
         return
 
     pkg = find_package_in_repos(source)
@@ -573,7 +770,7 @@ def cmd_install(args):
         actual = sha256_file(cache_file)
         if actual.lower() != str(expected_sha).lower():
             die(f"SHA256 mismatch. Expected {expected_sha}, got {actual}")
-    install_luma_file(cache_file, source_url=package_url)
+    install_luma_file(cache_file, source_url=package_url, install_deps=args.install_deps, yes=args.yes)
 
 
 def cmd_pkg_get(args):
@@ -724,7 +921,7 @@ def cmd_self_uninstall(args):
 
 
 def build_parser():
-    parser = argparse.ArgumentParser(prog="luma", description="LUMA Package Manager V1.2")
+    parser = argparse.ArgumentParser(prog="luma", description="LUMA Package Manager V1.3")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("version", help="show LUMA version")
@@ -754,9 +951,21 @@ def build_parser():
     p.add_argument("target")
     p.set_defaults(func=cmd_check)
 
+    p = sub.add_parser("deps", help="check dependencies from MANIFEST/dependencies.txt")
+    p.add_argument("target")
+    p.add_argument("-y", "--yes", action="store_true")
+    p.set_defaults(func=cmd_deps)
+
+    p = sub.add_parser("install-deps", help="install dependencies from MANIFEST/dependencies.txt")
+    p.add_argument("target")
+    p.add_argument("-y", "--yes", action="store_true")
+    p.set_defaults(func=cmd_install_deps)
+
     p = sub.add_parser("install", help="install package by id, file, URL, or GitHub Pages root")
     p.add_argument("package")
     p.add_argument("release", nargs="?")
+    p.add_argument("--install-deps", action="store_true", help="install missing dependencies before installing")
+    p.add_argument("-y", "--yes", action="store_true", help="yes to dependency install prompts")
     p.set_defaults(func=cmd_install)
 
     p = sub.add_parser("pkg-get", help="add a repo index")
